@@ -1,7 +1,8 @@
 # iRacing Copilot
 
 Foundational telemetry/setup-reading layer for a voice-driven race-engineer
-assistant, built on [pyirsdk](https://github.com/kutu/pyirsdk).
+assistant, built on [pyirsdk](https://github.com/kutu/pyirsdk) (vendored
+under `lib/pyirsdk/` - see below).
 
 ## Requires
 
@@ -15,8 +16,19 @@ assistant, built on [pyirsdk](https://github.com/kutu/pyirsdk).
 
     pip install -r requirements.txt
 
+`pyirsdk` itself is vendored (see below), not pip-installed - it isn't in
+`requirements.txt`; everything in that file is `irsdk.py`'s own runtime
+dependency (`PyYAML`) plus this project's other dependencies.
+
 ## What's here
 
+- `lib/pyirsdk/` - a verbatim, vendored copy of upstream
+  [pyirsdk](https://github.com/kutu/pyirsdk) (MIT licensed), pinned to a
+  known commit instead of pulled from PyPI - see `lib/pyirsdk/VENDORED.md`
+  for why and its provenance. All of this project's scripts add it to
+  `sys.path` before `import irsdk`; nothing else needs to change if you
+  later modify it (e.g. to extend the `IBT` class so it also parses
+  `CarSetup` from recorded `.ibt` files, which upstream doesn't do).
 - `iracing_copilot/session.py` - connection lifecycle: connects to iRacing,
   detects disconnects/restarts, throttles reconnect attempts.
 - `iracing_copilot/telemetry.py` - polls live telemetry every tick and
@@ -74,7 +86,7 @@ With iRacing running (in a car, on track or in the garage):
 To develop without iRacing running, dump a shared-memory snapshot once while
 connected, then replay it:
 
-    python -m irsdk --dump snapshot.bin
+    python lib/pyirsdk/irsdk.py --dump snapshot.bin
     python scripts/run_logger.py --test snapshot.bin
 
 To exercise the full pipeline (telemetry -> features -> setup -> Claude diagnosis) after each completed lap, with `ANTHROPIC_API_KEY` set:

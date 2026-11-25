@@ -15,7 +15,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+_PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "..")
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "lib", "pyirsdk"))  # vendored irsdk.py - see lib/pyirsdk/VENDORED.md
+sys.path.insert(0, _PROJECT_ROOT)
 
 from iracing_copilot.car_setup import CarSetupReader
 from iracing_copilot.session import IRacingSession
