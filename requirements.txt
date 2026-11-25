@@ -1,0 +1,9 @@
+pyirsdk
+PyYAML
+anthropic
+pydantic
+sounddevice
+numpy
+pynput
+requests
+pyttsx3
