@@ -5,10 +5,12 @@ immediately (text-to-speech) and logged in an always-on-top overlay window
 you can scroll back through, grounded in the last completed lap's telemetry
 features and the car's current setup.
 
-Requires OPENAI_API_KEY (speech-to-text) and ANTHROPIC_API_KEY/`ant auth
-login` (diagnosis). Both make real API calls and incur real cost on each
-push-to-talk. Text-to-speech is local/offline and free (see
-iracing_copilot/text_to_speech.py).
+Requires OPENAI_API_KEY (speech-to-text, real cost per recording) and Claude
+authenticated for diagnosis - either ANTHROPIC_API_KEY (also real cost per
+call) or a Claude.ai subscription login (`ant auth login` / Claude Code
+`/login`, draws from that plan's usage instead); see README.md's
+"Authenticating Claude" section. Text-to-speech is local/offline and free
+(see iracing_copilot/text_to_speech.py).
 
 tkinter (the overlay) owns the main thread and its mainloop; telemetry
 polling and recording processing run on background threads and only ever

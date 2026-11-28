@@ -20,6 +20,47 @@ under `lib/pyirsdk/` - see below).
 `requirements.txt`; everything in that file is `irsdk.py`'s own runtime
 dependency (`PyYAML`) plus this project's other dependencies.
 
+## Authenticating Claude: API key vs. your Claude subscription
+
+`diagnosis.py` calls `anthropic.Anthropic()` with no arguments, and the
+Anthropic Python SDK resolves credentials in this order, first match wins:
+
+1. `ANTHROPIC_API_KEY` env var - a separate Anthropic Console/platform API
+   key, billed per token. This is a different kind of account from a
+   Claude.ai chat subscription and has to be created and funded separately.
+2. `ANTHROPIC_AUTH_TOKEN` env var.
+3. An OAuth profile from `ant auth login` (the Anthropic CLI) or from
+   logging into Claude Code with `/login` - **both write to the same
+   credential store** (`~/.config/anthropic/` on Linux/macOS,
+   `%APPDATA%\Anthropic` on Windows), so either one works. Logging in this
+   way with your Claude.ai **Pro/Max/Team subscription** lets this project
+   call Claude without a separate API key at all - usage draws from that
+   subscription's own included usage instead of pay-per-token billing.
+
+So: if a Pro/Max/Team chat plan is what you have (per the brief above, the
+common case vs. a separate developer/platform account), you don't need to
+touch `ANTHROPIC_API_KEY` - just log in once on **the machine that actually
+runs the script** (the Windows PC with iRacing, not wherever you're reading
+this from), either by installing the `ant` CLI and running `ant auth login`,
+or by installing Claude Code and running `/login` there. No code here needs
+to change either way; the SDK's credential resolution is what decides which
+path gets used.
+
+Two things worth knowing about that path:
+
+- **A stray `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` env var always
+  wins over the OAuth profile**, even an empty one (`ANTHROPIC_API_KEY=""`
+  still "wins" and then fails auth). If login looks right but requests
+  still fail, check for one of these set somewhere (shell profile, a
+  leftover `.env`, etc.) and unset it.
+- **It's the same usage pool as your other Claude Code/chat usage on that
+  account**, not a separate budget - heavy use of the push-to-talk loop
+  competes with whatever else you use that subscription for, within
+  whatever usage limits the plan has.
+
+`transcribe_whisper_api()` is unrelated to this and still needs its own
+`OPENAI_API_KEY` regardless of how Claude is authenticated.
+
 ## What's here
 
 - `lib/pyirsdk/` - a verbatim, vendored copy of upstream
@@ -52,8 +93,10 @@ dependency (`PyYAML`) plus this project's other dependencies.
   API, structured output via Pydantic) and returns a validated
   `Diagnosis`: symptom summary, cited evidence, setup-change
   recommendations (addressed by the exact key path in `CarSetup`, since
-  the schema differs per car), and caveats. Requires `ANTHROPIC_API_KEY`
-  (or `ant auth login`) and **does incur real API cost per call**.
+  the schema differs per car), and caveats. Needs Claude authenticated one
+  of two ways (see "Authenticating Claude" above) - an `ANTHROPIC_API_KEY`
+  (incurs real per-call cost) or a Claude.ai subscription via `ant auth
+  login`/Claude Code `/login` (draws from that plan's usage instead).
 - `iracing_copilot/push_to_talk.py` - hold a hotkey (default F13, see the
   module docstring for why and how to remap a wheel/button-box button to
   it) to record audio, release to get it back as WAV bytes. Uses
@@ -89,13 +132,15 @@ connected, then replay it:
     python lib/pyirsdk/irsdk.py --dump snapshot.bin
     python scripts/run_logger.py --test snapshot.bin
 
-To exercise the full pipeline (telemetry -> features -> setup -> Claude diagnosis) after each completed lap, with `ANTHROPIC_API_KEY` set:
+To exercise the full pipeline (telemetry -> features -> setup -> Claude
+diagnosis) after each completed lap, with Claude authenticated (API key or
+subscription login - see "Authenticating Claude" above):
 
     python scripts/diagnose_last_lap.py
 
 For the full voice pipeline - push-to-talk capture -> Whisper transcription
--> Claude diagnosis -> spoken + on-screen overlay delivery - with both
-`OPENAI_API_KEY` and `ANTHROPIC_API_KEY` set:
+-> Claude diagnosis -> spoken + on-screen overlay delivery - with Claude
+authenticated as above and `OPENAI_API_KEY` set:
 
     python scripts/ptt_copilot.py
 

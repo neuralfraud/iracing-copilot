@@ -3,8 +3,10 @@
 driver complaint (a stand-in for the push-to-talk/STT step, which comes
 later) and print Claude's structured setup diagnosis.
 
-This makes a real Claude API call and will incur usage cost - requires
-ANTHROPIC_API_KEY (or `ant auth login`) to be configured.
+This calls Claude - authenticate first via ANTHROPIC_API_KEY (per-call cost)
+or a Claude.ai subscription login (`ant auth login` / Claude Code `/login`,
+draws from that plan's usage instead); see README.md's "Authenticating
+Claude" section for the full explanation and the precedence gotcha.
 
 Usage:
     python scripts/diagnose_last_lap.py
