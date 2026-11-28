@@ -15,7 +15,7 @@ from typing import List, Optional
 import anthropic
 from pydantic import BaseModel, Field
 
-MODEL = "claude-opus-5"
+MODEL = "claude-opus-5-5"
 MAX_TOKENS = 16000
 
 
@@ -130,6 +130,10 @@ def diagnose(complaint, lap_features, car_setup, client=None, model=MODEL):
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
             output_format=Diagnosis,
+            # claude-opus-5-5 defaults to "medium" effort (claude-opus-5 defaulted to
+            # "high"); pin "high" explicitly to keep this intelligence-sensitive
+            # diagnosis at the same reasoning depth as before the migration.
+            output_config={"effort": "high"},
         )
     except anthropic.AuthenticationError as e:
         raise DiagnosisError(f"invalid Anthropic API credentials: {e}") from e
