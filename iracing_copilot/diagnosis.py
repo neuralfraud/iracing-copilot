@@ -105,46 +105,91 @@ class DiagnosisError(RuntimeError):
     """Raised when the Claude API call for a diagnosis fails."""
 
 
-def diagnose(complaint, lap_features, car_setup, client=None, model=MODEL):
-    """Run one diagnosis call.
+class DiagnosisSession:
+    """One evolving conversation with Claude across a whole iRacing session.
 
-    complaint: str - transcribed driver feedback
-    lap_features: dict - LapFeatures.to_dict() from iracing_copilot.features
-    car_setup: dict - CarSetupReader.read()/poll_for_update() output
-    client: an anthropic.Anthropic instance (created from env/ant-cli auth if not passed)
+    Each ask() is a new turn in the *same* conversation, not a fresh,
+    context-free request - so Claude can track what's already been tried,
+    whether a prior recommendation helped, and how the car's behavior is
+    changing over the session, instead of starting cold on every complaint.
 
-    Returns a validated Diagnosis. Raises DiagnosisError on any API failure.
+    Construct one of these per iRacing session (e.g. once at the start of
+    ptt_copilot.py's run) and call ask() for every driver complaint in that
+    session. For a single throwaway call, diagnose() below wraps this.
     """
-    client = client or anthropic.Anthropic()
 
-    user_content = (
+    def __init__(self, client=None, model=MODEL):
+        self.client = client or anthropic.Anthropic()
+        self.model = model
+        self._messages = []
+
+    @property
+    def turn_count(self):
+        """Number of completed (user, assistant) turn pairs so far."""
+        return len(self._messages) // 2
+
+    def reset(self):
+        """Drop all history and start a fresh conversation (e.g. the driver
+        changed cars in the garage mid-process)."""
+        self._messages = []
+
+    def ask(self, complaint, lap_features, car_setup):
+        """Send one complaint + its telemetry/setup context as the next
+        turn. Returns a validated Diagnosis. Raises DiagnosisError on any
+        API failure - the failed turn is rolled back so a retry starts
+        from the same clean state rather than compounding on it.
+        """
+        user_content = _build_user_content(complaint, lap_features, car_setup)
+        self._messages.append({"role": "user", "content": user_content})
+
+        try:
+            try:
+                response = self.client.messages.parse(
+                    model=self.model,
+                    max_tokens=MAX_TOKENS,
+                    # Cached because every turn in a session resends it unchanged -
+                    # the growing conversation history itself isn't cached here (a
+                    # possible follow-up: a cache_control breakpoint that slides to
+                    # the end of self._messages each turn), just this stable prefix.
+                    system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+                    messages=self._messages,
+                    output_format=Diagnosis,
+                    # claude-opus-5-5 defaults to "medium" effort (claude-opus-5
+                    # defaulted to "high"); pin "high" explicitly to keep this
+                    # intelligence-sensitive diagnosis at the same reasoning depth.
+                    output_config={"effort": "high"},
+                )
+            except anthropic.AuthenticationError as e:
+                raise DiagnosisError(f"invalid Anthropic API credentials: {e}") from e
+            except anthropic.RateLimitError as e:
+                raise DiagnosisError(f"rate limited by Anthropic API: {e}") from e
+            except anthropic.APIConnectionError as e:
+                raise DiagnosisError(f"could not reach Anthropic API: {e}") from e
+            except anthropic.APIStatusError as e:
+                raise DiagnosisError(f"Anthropic API error ({e.status_code}): {e.message}") from e
+        except DiagnosisError:
+            self._messages.pop()  # roll back the unanswered user turn
+            raise
+
+        self._messages.append({"role": "assistant", "content": response.content})
+        return response.parsed_output
+
+
+def diagnose(complaint, lap_features, car_setup, client=None, model=MODEL):
+    """One-shot convenience wrapper: a single-turn DiagnosisSession, used
+    once and discarded. For a real iRacing session with multiple
+    complaints, use DiagnosisSession directly instead, so Claude can track
+    what's already been tried across the session - see its docstring.
+    """
+    return DiagnosisSession(client=client, model=model).ask(complaint, lap_features, car_setup)
+
+
+def _build_user_content(complaint, lap_features, car_setup):
+    return (
         f"Driver complaint: {complaint}\n\n"
         f"Telemetry feature summary (JSON):\n{_to_json(lap_features)}\n\n"
         f"Current car setup (JSON):\n{_to_json(car_setup)}"
     )
-
-    try:
-        response = client.messages.parse(
-            model=model,
-            max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
-            output_format=Diagnosis,
-            # claude-opus-5-5 defaults to "medium" effort (claude-opus-5 defaulted to
-            # "high"); pin "high" explicitly to keep this intelligence-sensitive
-            # diagnosis at the same reasoning depth as before the migration.
-            output_config={"effort": "high"},
-        )
-    except anthropic.AuthenticationError as e:
-        raise DiagnosisError(f"invalid Anthropic API credentials: {e}") from e
-    except anthropic.RateLimitError as e:
-        raise DiagnosisError(f"rate limited by Anthropic API: {e}") from e
-    except anthropic.APIConnectionError as e:
-        raise DiagnosisError(f"could not reach Anthropic API: {e}") from e
-    except anthropic.APIStatusError as e:
-        raise DiagnosisError(f"Anthropic API error ({e.status_code}): {e.message}") from e
-
-    return response.parsed_output
 
 
 def _to_json(data):

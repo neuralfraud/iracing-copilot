@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Demo: connect to iRacing, and after each completed lap take a typed
-driver complaint (a stand-in for the push-to-talk/STT step, which comes
-later) and print Claude's structured setup diagnosis.
+driver complaint (a stand-in for push-to-talk/STT - see scripts/ptt_copilot.py
+for the real voice pipeline) and print Claude's structured setup diagnosis.
 
-This calls Claude - authenticate first via ANTHROPIC_API_KEY (per-call cost)
-or a Claude.ai subscription login (`ant auth login` / Claude Code `/login`,
-draws from that plan's usage instead); see README.md's "Authenticating
-Claude" section for the full explanation and the precedence gotcha.
+One run of this script is one DiagnosisSession (iracing_copilot/diagnosis.py):
+every complaint is a turn in the same conversation, not a fresh context-free
+call, so Claude can track what's already been tried across the laps.
+
+Needs an ANTHROPIC_API_KEY - a Claude.ai Pro/Max/Team *subscription* login
+is not sufficient on its own (confirmed in practice: it returns 429s on
+Messages API calls), so this needs a separate Anthropic Console API key
+regardless of what chat plan you already have.
 
 Usage:
     python scripts/diagnose_last_lap.py
@@ -24,7 +28,7 @@ sys.path.insert(0, _PROJECT_ROOT)
 
 from iracing_copilot.car_setup import CarSetupReader
 from iracing_copilot.cli_format import print_diagnosis
-from iracing_copilot.diagnosis import DiagnosisError, diagnose
+from iracing_copilot.diagnosis import DiagnosisError, DiagnosisSession
 from iracing_copilot.features import extract_lap_features
 from iracing_copilot.session import IRacingSession
 from iracing_copilot.telemetry import TelemetryLogger
@@ -41,6 +45,8 @@ def main():
     telemetry = TelemetryLogger(session.ir)
     car_setup = CarSetupReader(session.ir)
 
+    diagnosis_session = DiagnosisSession()
+
     print("waiting for iRacing... (Ctrl+C to quit)")
     last_completed_seen = None
 
@@ -54,7 +60,7 @@ def main():
 
                 if completed_lap and completed_lap[-1].get("Lap") != last_completed_seen:
                     last_completed_seen = completed_lap[-1].get("Lap")
-                    _run_diagnosis(completed_lap, car_setup.read())
+                    _run_diagnosis(completed_lap, car_setup.read(), diagnosis_session)
 
             time.sleep(1 / POLL_HZ)
     except KeyboardInterrupt:
@@ -63,7 +69,7 @@ def main():
         session.shutdown()
 
 
-def _run_diagnosis(lap_samples, setup):
+def _run_diagnosis(lap_samples, setup, diagnosis_session):
     if not setup:
         print("\n(no car setup available yet - get in the car/garage)")
         return
@@ -76,7 +82,7 @@ def _run_diagnosis(lap_samples, setup):
     features = extract_lap_features(lap_samples).to_dict()
 
     try:
-        result = diagnose(complaint, features, setup)
+        result = diagnosis_session.ask(complaint, features, setup)
     except DiagnosisError as e:
         print(f"diagnosis failed: {e}")
         return

@@ -5,13 +5,18 @@ immediately (text-to-speech) and logged in an always-on-top overlay window
 you can scroll back through, grounded in the last completed lap's telemetry
 features and the car's current setup.
 
+One run of this script is one DiagnosisSession (iracing_copilot/diagnosis.py):
+every complaint in the session is a new turn in the same conversation with
+Claude, not a fresh context-free call, so it can track what's already been
+tried and how the car's behavior is evolving across the session.
+
 Speech-to-text is local/offline (faster-whisper) and free, same as
 text-to-speech - no OpenAI key needed (see iracing_copilot/speech_to_text.py;
 the very first run ever on a machine downloads the model, needing network
-access that one time only). Claude still needs to be authenticated for
-diagnosis - either ANTHROPIC_API_KEY (real cost per call) or a Claude.ai
-subscription login (`ant auth login` / Claude Code `/login`, draws from
-that plan's usage instead); see README.md's "Authenticating Claude" section.
+access that one time only). Claude needs an ANTHROPIC_API_KEY - a Claude.ai
+Pro/Max/Team *subscription* login is not sufficient on its own (confirmed in
+practice: it returns 429s on Messages API calls), so this needs a separate
+Anthropic Console API key regardless of what chat plan you already have.
 
 tkinter (the overlay) owns the main thread and its mainloop; telemetry
 polling and recording processing run on background threads and only ever
@@ -38,7 +43,7 @@ sys.path.insert(0, _PROJECT_ROOT)
 
 from iracing_copilot.car_setup import CarSetupReader
 from iracing_copilot.cli_format import format_diagnosis, print_diagnosis, speakable_diagnosis
-from iracing_copilot.diagnosis import DiagnosisError, diagnose
+from iracing_copilot.diagnosis import DiagnosisError, DiagnosisSession
 from iracing_copilot.features import extract_lap_features
 from iracing_copilot.overlay import Overlay
 from iracing_copilot.push_to_talk import PushToTalkRecorder
@@ -63,6 +68,10 @@ def main():
     tts = TextToSpeechWorker()
     tts.start()
 
+    # One DiagnosisSession for this whole process run - every complaint this
+    # session hears is a turn in the same conversation with Claude.
+    diagnosis_session = DiagnosisSession()
+
     shutdown = threading.Event()
     threading.Thread(
         target=_poll_telemetry_loop, args=(session, telemetry, shutdown), daemon=True
@@ -76,7 +85,7 @@ def main():
 
     threading.Thread(
         target=_process_recordings,
-        args=(work_queue, telemetry, car_setup, overlay, tts, recorder.hotkey),
+        args=(work_queue, telemetry, car_setup, overlay, tts, recorder.hotkey, diagnosis_session),
         daemon=True,
     ).start()
 
@@ -99,7 +108,7 @@ def _poll_telemetry_loop(session, telemetry, shutdown):
         time.sleep(1 / POLL_HZ)
 
 
-def _process_recordings(work_queue, telemetry, car_setup, overlay, tts, hotkey):
+def _process_recordings(work_queue, telemetry, car_setup, overlay, tts, hotkey, diagnosis_session):
     overlay.post("loading local speech-to-text model (first run may need to download it)...")
     preload_model()
     overlay.post(f"ready - hold {hotkey} and speak to get setup feedback")
@@ -128,7 +137,7 @@ def _process_recordings(work_queue, telemetry, car_setup, overlay, tts, hotkey):
         features = extract_lap_features(lap_samples).to_dict()
 
         try:
-            result = diagnose(complaint, features, setup)
+            result = diagnosis_session.ask(complaint, features, setup)
         except DiagnosisError as e:
             overlay.post(f"diagnosis failed: {e}")
             continue
