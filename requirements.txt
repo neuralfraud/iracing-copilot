@@ -6,3 +6,4 @@ numpy
 pynput
 requests
 pyttsx3
+faster-whisper

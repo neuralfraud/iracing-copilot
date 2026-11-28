@@ -58,8 +58,8 @@ Two things worth knowing about that path:
   competes with whatever else you use that subscription for, within
   whatever usage limits the plan has.
 
-`transcribe_whisper_api()` is unrelated to this and still needs its own
-`OPENAI_API_KEY` regardless of how Claude is authenticated.
+Speech-to-text is unrelated to this and local/offline by default (see
+`iracing_copilot/speech_to_text.py` below) - no second API key needed.
 
 ## What's here
 
@@ -101,10 +101,12 @@ Two things worth knowing about that path:
   module docstring for why and how to remap a wheel/button-box button to
   it) to record audio, release to get it back as WAV bytes. Uses
   `sounddevice` + `pynput`, no admin rights needed on Windows.
-- `iracing_copilot/speech_to_text.py` - transcribes that WAV audio via
-  OpenAI's hosted Whisper endpoint (raw HTTP, not the `openai` SDK - see
-  module docstring). Requires `OPENAI_API_KEY` and **incurs real API
-  cost per recording**.
+- `iracing_copilot/speech_to_text.py` - transcribes that WAV audio locally
+  via `faster-whisper` by default: no API key, no per-call cost, no
+  network dependency after the model's one-time download. `transcribe_whisper_api()`
+  (OpenAI's hosted endpoint, raw HTTP) is kept as an opt-in alternative for
+  lower-spec machines - requires `OPENAI_API_KEY` and incurs real cost
+  per recording.
 - `iracing_copilot/overlay.py` - an always-on-top window (plain `tkinter`,
   no extra dependency) logging every diagnosis, scrollable. Not iRacing's
   own in-sim chat - `ir.chat_command()` only reaches other drivers, not a
@@ -112,9 +114,10 @@ Two things worth knowing about that path:
   post to it through a thread-safe queue.
 - `iracing_copilot/text_to_speech.py` - speaks each diagnosis aloud via
   `pyttsx3` (local/offline - SAPI5 on Windows), so it's free and has no
-  network dependency, unlike the Whisper/Claude calls elsewhere in this
-  project. Runs its own engine on a dedicated background thread, fed
-  through a queue, since `pyttsx3` engines aren't thread-safe.
+  network dependency, same as the local speech-to-text above (only the
+  Claude diagnosis call needs the network). Runs its own engine on a
+  dedicated background thread, fed through a queue, since `pyttsx3`
+  engines aren't thread-safe.
 - `iracing_copilot/cli_format.py` - shared `Diagnosis` formatting:
   `format_diagnosis()` (full text, for the terminal/overlay) and
   `speakable_diagnosis()` (a short natural-language version for TTS, which
@@ -138,9 +141,10 @@ subscription login - see "Authenticating Claude" above):
 
     python scripts/diagnose_last_lap.py
 
-For the full voice pipeline - push-to-talk capture -> Whisper transcription
--> Claude diagnosis -> spoken + on-screen overlay delivery - with Claude
-authenticated as above and `OPENAI_API_KEY` set:
+For the full voice pipeline - push-to-talk capture -> local Whisper
+transcription -> Claude diagnosis -> spoken + on-screen overlay delivery -
+with Claude authenticated as above (speech-to-text needs no key, just the
+one-time model download on first run):
 
     python scripts/ptt_copilot.py
 
@@ -156,7 +160,8 @@ which is also what a typical Windows Python install includes.)
 - The iRacing SDK can only *read* the car setup - there is no command to
   write values back into the garage. Recommendations from this project
   need to be applied by the driver manually in-game.
-- `diagnose()` and `transcribe_whisper_api()` each call a paid API on
-  every use (Claude and OpenAI Whisper respectively) - there is no local/
-  offline mode for those two steps. Text-to-speech delivery is local and
-  free.
+- `diagnose()` calls Claude on every use - either metered per-call
+  (`ANTHROPIC_API_KEY`) or drawing from a Claude.ai subscription's usage
+  (see "Authenticating Claude" above); there's no local/offline mode for
+  this step, since the setup reasoning needs an actual LLM. Speech-to-text
+  and text-to-speech are both local/offline and free by default.

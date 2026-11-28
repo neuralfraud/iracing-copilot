@@ -5,12 +5,13 @@ immediately (text-to-speech) and logged in an always-on-top overlay window
 you can scroll back through, grounded in the last completed lap's telemetry
 features and the car's current setup.
 
-Requires OPENAI_API_KEY (speech-to-text, real cost per recording) and Claude
-authenticated for diagnosis - either ANTHROPIC_API_KEY (also real cost per
-call) or a Claude.ai subscription login (`ant auth login` / Claude Code
-`/login`, draws from that plan's usage instead); see README.md's
-"Authenticating Claude" section. Text-to-speech is local/offline and free
-(see iracing_copilot/text_to_speech.py).
+Speech-to-text is local/offline (faster-whisper) and free, same as
+text-to-speech - no OpenAI key needed (see iracing_copilot/speech_to_text.py;
+the very first run ever on a machine downloads the model, needing network
+access that one time only). Claude still needs to be authenticated for
+diagnosis - either ANTHROPIC_API_KEY (real cost per call) or a Claude.ai
+subscription login (`ant auth login` / Claude Code `/login`, draws from
+that plan's usage instead); see README.md's "Authenticating Claude" section.
 
 tkinter (the overlay) owns the main thread and its mainloop; telemetry
 polling and recording processing run on background threads and only ever
@@ -42,7 +43,7 @@ from iracing_copilot.features import extract_lap_features
 from iracing_copilot.overlay import Overlay
 from iracing_copilot.push_to_talk import PushToTalkRecorder
 from iracing_copilot.session import IRacingSession
-from iracing_copilot.speech_to_text import TranscriptionError, transcribe_whisper_api
+from iracing_copilot.speech_to_text import TranscriptionError, preload_model, transcribe_local_whisper
 from iracing_copilot.telemetry import TelemetryLogger
 from iracing_copilot.text_to_speech import TextToSpeechWorker
 
@@ -68,17 +69,18 @@ def main():
     ).start()
 
     # Push-to-talk releases fire on pynput's listener thread; hand recordings
-    # off to a worker thread so transcription/diagnosis network calls never
-    # block the hotkey listener, the telemetry poll loop, or the overlay.
+    # off to a worker thread so transcription/diagnosis calls never block the
+    # hotkey listener, the telemetry poll loop, or the overlay.
     work_queue = queue.Queue()
+    recorder = PushToTalkRecorder(on_recording=work_queue.put)
+
     threading.Thread(
-        target=_process_recordings, args=(work_queue, telemetry, car_setup, overlay, tts), daemon=True
+        target=_process_recordings,
+        args=(work_queue, telemetry, car_setup, overlay, tts, recorder.hotkey),
+        daemon=True,
     ).start()
 
-    recorder = PushToTalkRecorder(on_recording=work_queue.put)
     recorder.start()
-
-    overlay.post(f"ready - hold {recorder.hotkey} and speak to get setup feedback")
 
     try:
         overlay.run()  # blocks on the Tk mainloop until the window is closed
@@ -97,12 +99,16 @@ def _poll_telemetry_loop(session, telemetry, shutdown):
         time.sleep(1 / POLL_HZ)
 
 
-def _process_recordings(work_queue, telemetry, car_setup, overlay, tts):
+def _process_recordings(work_queue, telemetry, car_setup, overlay, tts, hotkey):
+    overlay.post("loading local speech-to-text model (first run may need to download it)...")
+    preload_model()
+    overlay.post(f"ready - hold {hotkey} and speak to get setup feedback")
+
     while True:
         wav_bytes = work_queue.get()
 
         try:
-            complaint = transcribe_whisper_api(wav_bytes)
+            complaint = transcribe_local_whisper(wav_bytes)
         except TranscriptionError as e:
             overlay.post(f"couldn't transcribe: {e}")
             continue
