@@ -22,50 +22,41 @@ dependency (`PyYAML`) plus this project's other dependencies.
 
 ## Authenticating Claude: API key vs. your Claude subscription
 
-`diagnosis.py` picks an auth path itself (`_build_default_client()`), in
-this order:
+`diagnosis.py` calls `anthropic.Anthropic()` with no arguments, and the
+Anthropic Python SDK resolves credentials in this order, first match wins:
 
-1. **`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_PROFILE` env
-   var set** - treated as "you configured this on purpose," so it's left
-   entirely to the Anthropic SDK's own resolution. `ANTHROPIC_API_KEY` is a
-   separate Anthropic Console/platform API key, billed per token - a
-   different kind of account from a Claude.ai chat subscription, created
-   and funded separately. `ANTHROPIC_PROFILE` names a profile from
-   `ant auth login` (the Anthropic CLI), stored under `~/.config/anthropic/`
-   (`%APPDATA%\Anthropic` on Windows).
-2. **Otherwise, Claude Code's own login** (`iracing_copilot/claude_code_credentials.py`)
-   - read directly from Claude Code's credentials file,
-   `~/.claude/.credentials.json` (`%USERPROFILE%\.claude\.credentials.json`
-   on Windows). If you're already logged into Claude Code with a
-   **Pro/Max/Team subscription**, this is it - no separate API key, no
-   separate login step, nothing to set up. Usage draws from that
+1. `ANTHROPIC_API_KEY` env var - a separate Anthropic Console/platform API
+   key, billed per token. This is a different kind of account from a
+   Claude.ai chat subscription and has to be created and funded separately.
+2. `ANTHROPIC_AUTH_TOKEN` env var.
+3. An OAuth profile from `ant auth login` (the Anthropic CLI) or from
+   logging into Claude Code with `/login` - **both write to the same
+   credential store** (`~/.config/anthropic/` on Linux/macOS,
+   `%APPDATA%\Anthropic` on Windows), so either one works. Logging in this
+   way with your Claude.ai **Pro/Max/Team subscription** lets this project
+   call Claude without a separate API key at all - usage draws from that
    subscription's own included usage instead of pay-per-token billing.
-3. Otherwise, falls back to a plain `anthropic.Anthropic()` client, which
-   surfaces the SDK's normal "not authenticated" error if nothing is
-   configured at all.
 
 So: if a Pro/Max/Team chat plan is what you have (per the brief above, the
-common case vs. a separate developer/platform account) and you're already
-logged into Claude Code **on the machine that actually runs the script**
-(the Windows PC with iRacing), nothing further is needed - this just works.
+common case vs. a separate developer/platform account), you don't need to
+touch `ANTHROPIC_API_KEY` - just log in once on **the machine that actually
+runs the script** (the Windows PC with iRacing, not wherever you're reading
+this from), either by installing the `ant` CLI and running `ant auth login`,
+or by installing Claude Code and running `/login` there. No code here needs
+to change either way; the SDK's credential resolution is what decides which
+path gets used.
 
-Three things worth knowing:
+Two things worth knowing about that path:
 
-- **This reads Claude Code's credentials file directly** - it re-reads it
-  on every API call rather than caching the token, so if Claude Code
-  refreshes it in the background you pick that up automatically; if
-  nothing refreshes it and it actually expires, you'll get a clear error
-  telling you to log in again (`claude_code_credentials.ClaudeCodeCredentialsError`,
-  wrapped into `DiagnosisError`).
-- **On macOS, Claude Code stores this in the OS Keychain instead of a
-  plain file** - `claude_code_credentials.is_available()` will correctly
-  report nothing found there, falling through to step 3 above. Use
-  `ANTHROPIC_API_KEY` or `ant auth login` on macOS instead.
-- **A stray `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_PROFILE`
-  env var always wins**, even an empty one (`ANTHROPIC_API_KEY=""` still
-  "wins" and then fails auth) - unset it if you want Claude Code's login
-  used instead. And either way, it's the same usage pool as your other
-  Claude Code/chat usage on that account, not a separate budget.
+- **A stray `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` env var always
+  wins over the OAuth profile**, even an empty one (`ANTHROPIC_API_KEY=""`
+  still "wins" and then fails auth). If login looks right but requests
+  still fail, check for one of these set somewhere (shell profile, a
+  leftover `.env`, etc.) and unset it.
+- **It's the same usage pool as your other Claude Code/chat usage on that
+  account**, not a separate budget - heavy use of the push-to-talk loop
+  competes with whatever else you use that subscription for, within
+  whatever usage limits the plan has.
 
 Speech-to-text is unrelated to this and local/offline by default (see
 `iracing_copilot/speech_to_text.py` below) - no second API key needed.
@@ -102,13 +93,10 @@ Speech-to-text is unrelated to this and local/offline by default (see
   API, structured output via Pydantic) and returns a validated
   `Diagnosis`: symptom summary, cited evidence, setup-change
   recommendations (addressed by the exact key path in `CarSetup`, since
-  the schema differs per car), and caveats. Picks an auth path itself -
-  see "Authenticating Claude" above.
-- `iracing_copilot/claude_code_credentials.py` - a custom credential
-  provider for the Anthropic SDK (`Anthropic(credentials=...)`) that reads
-  Claude Code's own login directly, so a Claude.ai subscription just works
-  with no separate API key - see "Authenticating Claude" above for the
-  full explanation.
+  the schema differs per car), and caveats. Needs Claude authenticated one
+  of two ways (see "Authenticating Claude" above) - an `ANTHROPIC_API_KEY`
+  (incurs real per-call cost) or a Claude.ai subscription via `ant auth
+  login`/Claude Code `/login` (draws from that plan's usage instead).
 - `iracing_copilot/push_to_talk.py` - hold a hotkey (default F13, see the
   module docstring for why and how to remap a wheel/button-box button to
   it) to record audio, release to get it back as WAV bytes. Uses

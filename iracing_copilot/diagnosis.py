@@ -10,33 +10,13 @@ prompt - treat `confidence` as the model's own hedge, not a guarantee.
 """
 
 import json
-import os
 from typing import List, Optional
 
 import anthropic
 from pydantic import BaseModel, Field
 
-from . import claude_code_credentials
-
 MODEL = "claude-opus-5-5"
 MAX_TOKENS = 16000
-
-# Env vars that mean "the user explicitly configured credentials" - when any
-# of these is set, leave auth entirely to the SDK's own resolution rather
-# than preferring Claude Code's login. Doesn't cover every possible explicit
-# setup (e.g. workload identity federation) - pass your own `client=` to
-# diagnose() for anything more exotic than this.
-_EXPLICIT_AUTH_ENV_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE")
-
-
-def _build_default_client():
-    if any(os.environ.get(var) for var in _EXPLICIT_AUTH_ENV_VARS):
-        return anthropic.Anthropic()
-
-    if claude_code_credentials.is_available():
-        return anthropic.Anthropic(credentials=claude_code_credentials.ClaudeCodeCredentials())
-
-    return anthropic.Anthropic()
 
 
 class CitedEvidence(BaseModel):
@@ -135,7 +115,7 @@ def diagnose(complaint, lap_features, car_setup, client=None, model=MODEL):
 
     Returns a validated Diagnosis. Raises DiagnosisError on any API failure.
     """
-    client = client or _build_default_client()
+    client = client or anthropic.Anthropic()
 
     user_content = (
         f"Driver complaint: {complaint}\n\n"
@@ -155,8 +135,6 @@ def diagnose(complaint, lap_features, car_setup, client=None, model=MODEL):
             # diagnosis at the same reasoning depth as before the migration.
             output_config={"effort": "high"},
         )
-    except claude_code_credentials.ClaudeCodeCredentialsError as e:
-        raise DiagnosisError(f"Claude Code credentials error: {e}") from e
     except anthropic.AuthenticationError as e:
         raise DiagnosisError(f"invalid Anthropic API credentials: {e}") from e
     except anthropic.RateLimitError as e:
